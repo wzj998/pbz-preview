@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>资源下载测速</title>
+<style>
+  :root { color-scheme: light dark; font: 16px system-ui, sans-serif; }
+  body { max-width: 42rem; margin: 8vh auto; padding: 0 1.25rem; line-height: 1.55; }
+  h1 { margin-bottom: .5rem; }
+  p { color: light-dark(#455466, #b6c2d0); }
+  button { font: inherit; border: 0; border-radius: .5rem; padding: .7rem 1.2rem; background: #225cc4; color: white; cursor: pointer; }
+  button:disabled { opacity: .6; cursor: wait; }
+  table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+  th, td { padding: .55rem .25rem; border-bottom: 1px solid light-dark(#d4dde8, #445166); text-align: left; }
+</style>
+<main>
+  <h1>资源下载测速</h1>
+  <p id="host"></p>
+  <p>每次顺序下载 3 个 4 MiB 的合成数据块，共 12 MiB。请在同一设备和网络下分别打开两站，交替测试。</p>
+  <button id="start" type="button">开始测速</button>
+  <p id="status" role="status"></p>
+  <table hidden id="results">
+    <thead><tr><th>数据块</th><th>首字节</th><th>平均下载速度</th></tr></thead>
+    <tbody></tbody>
+  </table>
+</main>
+<script>
+  const button = document.getElementById('start');
+  const status = document.getElementById('status');
+  const table = document.getElementById('results');
+  document.getElementById('host').textContent = location.hostname;
+  button.onclick = async () => {
+    button.disabled = true;
+    table.tBodies[0].replaceChildren();
+    table.hidden = false;
+    let totalBytes = 0;
+    let totalSeconds = 0;
+    try {
+      for (let index = 1; index <= 3; index += 1) {
+        status.textContent = `正在下载第 ${index} 个数据块…`;
+        const url = new URL(`./samples/chunk-${index}.bin`, location.href);
+        const start = performance.now();
+        const response = await fetch(url, {cache: 'no-store', signal: AbortSignal.timeout(60000)});
+        if (!response.ok || !response.body) throw new Error(`HTTP ${response.status}`);
+        const reader = response.body.getReader();
+        let first;
+        let bytes = 0;
+        while (true) {
+          const {done, value} = await reader.read();
+          if (done) break;
+          if (first === undefined && value.length) first = performance.now();
+          bytes += value.length;
+        }
+        if (bytes !== 4 * 1024 * 1024 || first === undefined) throw new Error('数据块大小异常');
+        const seconds = (performance.now() - start) / 1000;
+        const rate = bytes / 1024 ** 2 / seconds;
+        totalBytes += bytes;
+        totalSeconds += seconds;
+        const row = table.tBodies[0].insertRow();
+        for (const value of [index, `${Math.round(first - start)} ms`, `${rate.toFixed(2)} MiB/s`]) {
+          row.insertCell().textContent = value;
+        }
+      }
+      status.textContent = `12 MiB 耗时 ${totalSeconds.toFixed(2)} 秒，平均 ${(totalBytes / 1024 ** 2 / totalSeconds).toFixed(2)} MiB/s。`;
+    } catch (error) {
+      status.textContent = `测速中断（${error.name === 'TimeoutError' ? '单块下载超时' : error.message}）。`;
+    } finally {
+      button.disabled = false;
+    }
+  };
+</script>
+</html>
